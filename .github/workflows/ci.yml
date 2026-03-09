@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  php:
+    name: PHP Lint & Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer, phpstan
+          coverage: none
+
+      - name: Validate composer.json
+        run: composer validate --strict
+        working-directory: vufind
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+        working-directory: vufind
+
+      - name: PHP syntax lint
+        run: |
+          errors=0
+          while IFS= read -r -d '' file; do
+            php -l "$file" > /dev/null || errors=$((errors + 1))
+          done < <(find vufind/web -name "*.php" \
+            -not -path "*/tuque/*" \
+            -not -path "*/PEAR/*" \
+            -print0)
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::$errors PHP syntax error(s) found"
+            exit 1
+          fi
+          echo "All PHP files passed syntax check."
+
+      - name: PHPStan static analysis
+        run: phpstan analyse --no-progress --error-format=github
+
+  shellcheck:
+    name: Shell Script Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "./vufind/bash"
+          severity: warning

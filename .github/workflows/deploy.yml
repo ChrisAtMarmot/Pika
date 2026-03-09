@@ -1,0 +1,150 @@
+name: Deploy
+
+on:
+  # Runs automatically when a PR is merged to main
+  push:
+    branches:
+      - main
+  # Also allows manual triggering with a target override
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target (staging | production | all)"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+          - all
+
+# Prevent concurrent deploys to the same environment
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------
+  # CI must pass before any deploy
+  # ------------------------------------------------------------------
+  ci:
+    name: Run CI checks
+    uses: ./.github/workflows/ci.yml
+
+  # ------------------------------------------------------------------
+  # Deploy to staging (auto on merge to main, or manual)
+  # ------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to Staging
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: staging
+    # Run on push to main OR when manually targeting staging/all
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.target == 'staging' || inputs.target == 'all'))
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # DEPLOY_STAGING_HOSTS secret: JSON array of hostnames
+        # e.g. ["staging1.example.org", "staging2.example.org"]
+        host: ${{ fromJson(vars.STAGING_HOSTS) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      - name: Sync files to ${{ matrix.host }}
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='sites/' \
+            --exclude='vufind/web/sys/tuque/.git' \
+            --exclude='*.log' \
+            ./ ${{ vars.DEPLOY_USER }}@${{ matrix.host }}:/usr/local/pika/
+
+      - name: Run database migrations on ${{ matrix.host }}
+        run: |
+          ssh ${{ vars.DEPLOY_USER }}@${{ matrix.host }} \
+            "cd /usr/local/pika && bash install/run_migrations.sh"
+
+      - name: Reload web server on ${{ matrix.host }}
+        run: |
+          ssh ${{ vars.DEPLOY_USER }}@${{ matrix.host }} \
+            "sudo systemctl reload php8.4-fpm && sudo systemctl reload apache2"
+
+      - name: Smoke test ${{ matrix.host }}
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://${{ matrix.host }}/")
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Smoke test failed on ${{ matrix.host }} — HTTP $STATUS"
+            exit 1
+          fi
+          echo "Smoke test passed: HTTP $STATUS"
+
+  # ------------------------------------------------------------------
+  # Deploy to production (manual only)
+  # ------------------------------------------------------------------
+  deploy-production:
+    name: Deploy to Production
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production   # GitHub env with required reviewers gate
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.target == 'production' || inputs.target == 'all')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # DEPLOY_PRODUCTION_HOSTS repo variable: JSON array of hostnames
+        # e.g. ["prod1.example.org", "prod2.example.org"]
+        host: ${{ fromJson(vars.PRODUCTION_HOSTS) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      - name: Sync files to ${{ matrix.host }}
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='sites/' \
+            --exclude='vufind/web/sys/tuque/.git' \
+            --exclude='*.log' \
+            ./ ${{ vars.DEPLOY_USER }}@${{ matrix.host }}:/usr/local/pika/
+
+      - name: Run database migrations on ${{ matrix.host }}
+        run: |
+          ssh ${{ vars.DEPLOY_USER }}@${{ matrix.host }} \
+            "cd /usr/local/pika && bash install/run_migrations.sh"
+
+      - name: Reload web server on ${{ matrix.host }}
+        run: |
+          ssh ${{ vars.DEPLOY_USER }}@${{ matrix.host }} \
+            "sudo systemctl reload php8.4-fpm && sudo systemctl reload apache2"
+
+      - name: Smoke test ${{ matrix.host }}
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://${{ matrix.host }}/")
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Smoke test failed on ${{ matrix.host }} — HTTP $STATUS"
+            exit 1
+          fi
+          echo "Smoke test passed: HTTP $STATUS"
