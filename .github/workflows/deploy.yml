@@ -53,10 +53,10 @@ jobs:
         host: ${{ fromJson(vars.STAGING_HOSTS) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
+        uses: shimataro/ssh-key-action@6b84f2e793b32fa0b03a379cadadec75cc539391  # v2.8.0
         with:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
@@ -111,10 +111,10 @@ jobs:
         host: ${{ fromJson(vars.PRODUCTION_HOSTS) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
+        uses: shimataro/ssh-key-action@6b84f2e793b32fa0b03a379cadadec75cc539391  # v2.8.0
         with:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
